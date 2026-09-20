@@ -21,12 +21,12 @@ os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
 os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
 
 from data_loader import (
+    build_training_rdd,
+    compute_item_confidence,
     download_data,
-    load_and_filter,
     encode_ids,
     leave_one_out_split,
-    compute_item_confidence,
-    build_training_rdd,
+    load_and_filter,
 )
 from eals_spark import eALS
 from evaluation import Evaluator
@@ -38,9 +38,17 @@ st.set_page_config(page_title="eALS Recommender", page_icon="🎬", layout="wide
 #  Cached resources                                                            #
 # --------------------------------------------------------------------------- #
 
+
 @st.cache_resource(show_spinner=False)
 def get_spark_context(n_partitions: int):
-    from pyspark import SparkContext, SparkConf
+    """
+    Creates and caches a local SparkContext for the Streamlit session.
+
+    :param n_partitions: unused directly, kept so Streamlit's cache key
+        changes when the sidebar's partition count changes
+    :return: an initialised SparkContext
+    """
+    from pyspark import SparkConf, SparkContext
 
     conf = (
         SparkConf()
@@ -57,8 +65,20 @@ def get_spark_context(n_partitions: int):
 
 
 @st.cache_data(show_spinner=False)
-def load_dataset(data_url: str, raw_path: str, min_interactions: int,
-                  sample_fraction: float, seed: int):
+def load_dataset(
+    data_url: str, raw_path: str, min_interactions: int, sample_fraction: float, seed: int
+):
+    """
+    Downloads, filters, and splits the dataset, caching the result per
+    Streamlit session so the sidebar's other controls don't re-trigger it.
+
+    :param data_url: URL of the raw ratings CSV
+    :param raw_path: local path to cache the downloaded CSV
+    :param min_interactions: k-core filtering threshold
+    :param sample_fraction: fraction of raw rows to sample before filtering
+    :param seed: random seed for sampling
+    :return: (train_df, test_df, user2id, item2id, n_users, n_items)
+    """
     download_data(data_url, raw_path)
     df_raw = load_and_filter(
         raw_path,
@@ -85,7 +105,11 @@ data_url = st.sidebar.text_input(
 raw_data_path = st.sidebar.text_input("Local cache path", value="./data/ratings_Movies_and_TV.csv")
 min_interactions = st.sidebar.slider("Min interactions (k-core filter)", 2, 50, 10)
 sample_fraction = st.sidebar.slider(
-    "Sample fraction", 0.05, 1.0, 0.2, step=0.05,
+    "Sample fraction",
+    0.05,
+    1.0,
+    0.2,
+    step=0.05,
     help=(
         "Fraction of raw rows to sample before filtering. Because filtering "
         "requires each user/item to have at least 'Min interactions' entries, "
@@ -116,7 +140,7 @@ n_partitions = st.sidebar.slider("Spark partitions", 2, 16, 4)
 st.title("🎬 eALS Implicit-Feedback Recommender")
 st.caption(
     "Spark-parallelised element-wise ALS — He et al., "
-    "\"Fast Matrix Factorization for Online Recommendation with Implicit Feedback\", SIGIR 2016."
+    '"Fast Matrix Factorization for Online Recommendation with Implicit Feedback", SIGIR 2016.'
 )
 
 tab_data, tab_train, tab_compare, tab_recommend = st.tabs(
@@ -139,8 +163,7 @@ with tab_data:
     if st.button("Load / refresh data", type="primary"):
         with st.spinner("Loading and filtering data…"):
             t0 = time.time()
-            (train_df, test_df, user2id, item2id,
-             n_users, n_items) = load_dataset(
+            (train_df, test_df, user2id, item2id, n_users, n_items) = load_dataset(
                 data_url, raw_data_path, min_interactions, sample_fraction, int(seed)
             )
             elapsed = time.time() - t0
@@ -189,7 +212,11 @@ with tab_train:
 
     alpha = st.slider(
         "Popularity exponent α (0 = uniform, 0.5 = paper's default)",
-        0.0, 1.0, 0.5, step=0.1, key="train_alpha",
+        0.0,
+        1.0,
+        0.5,
+        step=0.1,
+        key="train_alpha",
     )
 
     if "train_df" not in st.session_state:
@@ -209,17 +236,28 @@ with tab_train:
 
         item_conf = compute_item_confidence(train_df, n_items, c0=c0, alpha=alpha)
         model = eALS(
-            n_users=n_users, n_items=n_items, K=K,
-            lambda_reg=lambda_reg, c0=c0, alpha=alpha, w_obs=w_obs, seed=int(seed),
+            n_users=n_users,
+            n_items=n_items,
+            K=K,
+            lambda_reg=lambda_reg,
+            c0=c0,
+            alpha=alpha,
+            w_obs=w_obs,
+            seed=int(seed),
         )
 
         chart_placeholder = st.empty()
         history = []
         for epoch in range(1, n_epochs + 1):
             epoch_hist = model.fit(
-                sc=sc, train_rdd=train_rdd, item_conf=item_conf,
-                n_epochs=1, evaluator=evaluator, test_df=test_df,
-                train_df=train_df, verbose=False,
+                sc=sc,
+                train_rdd=train_rdd,
+                item_conf=item_conf,
+                n_epochs=1,
+                evaluator=evaluator,
+                test_df=test_df,
+                train_df=train_df,
+                verbose=False,
             )
             row = epoch_hist[0]
             row["epoch"] = epoch
@@ -267,31 +305,43 @@ with tab_compare:
             with st.spinner(f"Training {label}…"):
                 item_conf = compute_item_confidence(train_df, n_items, c0=c0, alpha=a)
                 model = eALS(
-                    n_users=n_users, n_items=n_items, K=K,
-                    lambda_reg=lambda_reg, c0=c0, alpha=a, w_obs=w_obs, seed=int(seed),
+                    n_users=n_users,
+                    n_items=n_items,
+                    K=K,
+                    lambda_reg=lambda_reg,
+                    c0=c0,
+                    alpha=a,
+                    w_obs=w_obs,
+                    seed=int(seed),
                 )
                 history = model.fit(
-                    sc=sc, train_rdd=train_rdd, item_conf=item_conf,
-                    n_epochs=n_epochs, evaluator=evaluator, test_df=test_df,
-                    train_df=train_df, verbose=False,
+                    sc=sc,
+                    train_rdd=train_rdd,
+                    item_conf=item_conf,
+                    n_epochs=n_epochs,
+                    evaluator=evaluator,
+                    test_df=test_df,
+                    train_df=train_df,
+                    verbose=False,
                 )
                 results[label] = history
 
         rows = []
         for label, history in results.items():
             best = max(history, key=lambda r: r.get(f"hr@{top_k}", 0.0))
-            rows.append({
-                "Variant": label,
-                f"Best HR@{top_k}": best.get(f"hr@{top_k}"),
-                f"Best NDCG@{top_k}": best.get(f"ndcg@{top_k}"),
-                "Avg epoch time (s)": round(np.mean([r["time_s"] for r in history]), 2),
-            })
+            rows.append(
+                {
+                    "Variant": label,
+                    f"Best HR@{top_k}": best.get(f"hr@{top_k}"),
+                    f"Best NDCG@{top_k}": best.get(f"ndcg@{top_k}"),
+                    "Avg epoch time (s)": round(np.mean([r["time_s"] for r in history]), 2),
+                }
+            )
         st.dataframe(pd.DataFrame(rows).set_index("Variant"), use_container_width=True)
 
-        combined = pd.DataFrame({
-            label: [r[f"hr@{top_k}"] for r in history]
-            for label, history in results.items()
-        })
+        combined = pd.DataFrame(
+            {label: [r[f"hr@{top_k}"] for r in history] for label, history in results.items()}
+        )
         combined.index = range(1, n_epochs + 1)
         combined.index.name = "epoch"
         st.line_chart(combined)

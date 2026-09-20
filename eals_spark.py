@@ -29,47 +29,54 @@ Equation references use the paper's numbering:
   Eq. 13 : closed-form update for q_if
 """
 
-import numpy as np
 import time
-from typing import Optional, List, Tuple, Dict
 
-from pyspark import SparkContext, Broadcast
-
+import numpy as np
+from pyspark import Broadcast, SparkContext
 
 # =========================================================================== #
 #   Module-level worker functions (must be picklable → not inside a class)    #
 # =========================================================================== #
 
-def _make_user_updater(Q_bc: Broadcast, P_bc: Broadcast, Sq_bc: Broadcast,
-                       K: int, lambda_reg: float):
-    """
-    Return a function that maps  (user_id, items_list) → (user_id, new_p_u).
 
-    items_list : list of (item_id, r_ui, w_ui, c_i)
+def _make_user_updater(
+    Q_bc: Broadcast, P_bc: Broadcast, Sq_bc: Broadcast, K: int, lambda_reg: float
+):
+    """
+    Returns a function that maps (user_id, items_list) to (user_id, new_p_u),
+    where items_list is a list of (item_id, r_ui, w_ui, c_i) tuples.
 
     Uses a factory closure so that the broadcast variables are captured at
-    *definition time* (avoiding late-binding Python closure bugs in loops).
+    *definition time*, avoiding late-binding Python closure bugs in loops.
+
+    :param Q_bc: broadcast item factor matrix
+    :param P_bc: broadcast user factor matrix
+    :param Sq_bc: broadcast S^q cache matrix
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength
+    :return: a Spark-map-safe update_user(record) function
     """
-    def update_user(record: Tuple[int, list]) -> Tuple[int, list]:
+
+    def update_user(record: tuple[int, list]) -> tuple[int, list]:
         user_id, items = record
         if not items:
             return user_id, P_bc.value[user_id].tolist()
 
         # ---------- pull broadcast payloads ----------
-        Q_local: np.ndarray = Q_bc.value   # shape (N, K)
-        p_u: np.ndarray = P_bc.value[user_id].copy()   # shape (K,)
-        Sq: np.ndarray = Sq_bc.value       # shape (K, K)
+        Q_local: np.ndarray = Q_bc.value  # shape (N, K)
+        p_u: np.ndarray = P_bc.value[user_id].copy()  # shape (K,)
+        Sq: np.ndarray = Sq_bc.value  # shape (K, K)
 
         # ---------- gather observed-item data ----------
         item_ids = [x[0] for x in items]
         Q_obs = np.array([Q_local[iid] for iid in item_ids], dtype=np.float64)  # (|R_u|, K)
-        r_uis = np.array([x[1] for x in items], dtype=np.float64)               # (|R_u|,)
-        w_uis = np.array([x[2] for x in items], dtype=np.float64)               # (|R_u|,)
-        c_is  = np.array([x[3] for x in items], dtype=np.float64)               # (|R_u|,)
+        r_uis = np.array([x[1] for x in items], dtype=np.float64)  # (|R_u|,)
+        w_uis = np.array([x[2] for x in items], dtype=np.float64)  # (|R_u|,)
+        c_is = np.array([x[3] for x in items], dtype=np.float64)  # (|R_u|,)
 
         # ---------- initialise prediction cache ----------
         # r_hat_ui = p_u^T q_i  for each observed item i  (Eq. 1)
-        r_hats: np.ndarray = Q_obs @ p_u   # (|R_u|,)
+        r_hats: np.ndarray = Q_obs @ p_u  # (|R_u|,)
 
         # ---------- element-wise ALS loop (Algorithm 1, lines 6–9) ----------
         # Eq. 12:
@@ -85,19 +92,13 @@ def _make_user_updater(Q_bc: Broadcast, P_bc: Broadcast, Sq_bc: Broadcast,
             r_hats_f: np.ndarray = r_hats - old_puf * Q_obs[:, f]  # (|R_u|,)
 
             # Numerator — observed data term
-            num = float(
-                np.dot(w_uis * r_uis - (w_uis - c_is) * r_hats_f, Q_obs[:, f])
-            )
+            num = float(np.dot(w_uis * r_uis - (w_uis - c_is) * r_hats_f, Q_obs[:, f]))
             # Subtract missing-data cache term: Σ_{k≠f} p_uk · Sq[k,f]
             #   = p_u @ Sq[:,f] − p_uf · Sq[f,f]
             num -= float(p_u @ Sq[:, f]) - old_puf * float(Sq[f, f])
 
             # Denominator
-            denom = (
-                float(np.dot(w_uis - c_is, Q_obs[:, f] ** 2))
-                + float(Sq[f, f])
-                + lambda_reg
-            )
+            denom = float(np.dot(w_uis - c_is, Q_obs[:, f] ** 2)) + float(Sq[f, f]) + lambda_reg
 
             # Update factor f
             p_u[f] = num / max(denom, 1e-10)
@@ -110,30 +111,44 @@ def _make_user_updater(Q_bc: Broadcast, P_bc: Broadcast, Sq_bc: Broadcast,
     return update_user
 
 
-def _make_item_updater(P_bc: Broadcast, Q_bc: Broadcast, Sp_bc: Broadcast,
-                       item_conf_bc: Broadcast, K: int, lambda_reg: float):
+def _make_item_updater(
+    P_bc: Broadcast,
+    Q_bc: Broadcast,
+    Sp_bc: Broadcast,
+    item_conf_bc: Broadcast,
+    K: int,
+    lambda_reg: float,
+):
     """
-    Return a function that maps  (item_id, users_list) → (item_id, new_q_i).
-
-    users_list : list of (user_id, r_ui, w_ui)
+    Returns a function that maps (item_id, users_list) to (item_id, new_q_i),
+    where users_list is a list of (user_id, r_ui, w_ui) tuples.
 
     Eq. 13:
       q_if = [ Σ_{u∈R_i}(w_ui·r_ui − (w_ui−c_i)·r̂^f_ui)·p_uf
                − c_i · Σ_{k≠f} q_ik · s^p_kf ]
              ÷ [ Σ_{u∈R_i}(w_ui−c_i)·p_uf² + c_i·s^p_ff + λ ]
 
-    Note: c_i is a *scalar* for each item (item-level popularity weight).
-          s^p_kf  is the (k,f) element of S^p = P^T P.
+    Note: c_i is a *scalar* for each item (item-level popularity weight),
+    and s^p_kf is the (k,f) element of S^p = P^T P.
+
+    :param P_bc: broadcast user factor matrix
+    :param Q_bc: broadcast item factor matrix
+    :param Sp_bc: broadcast S^p cache matrix
+    :param item_conf_bc: broadcast per-item confidence array
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength
+    :return: a Spark-map-safe update_item(record) function
     """
-    def update_item(record: Tuple[int, list]) -> Tuple[int, list]:
+
+    def update_item(record: tuple[int, list]) -> tuple[int, list]:
         item_id, users = record
         if not users:
             return item_id, Q_bc.value[item_id].tolist()
 
         # ---------- pull broadcast payloads ----------
-        P_local: np.ndarray = P_bc.value   # shape (M, K)
-        q_i: np.ndarray = Q_bc.value[item_id].copy()   # shape (K,)
-        Sp: np.ndarray = Sp_bc.value       # shape (K, K)
+        P_local: np.ndarray = P_bc.value  # shape (M, K)
+        q_i: np.ndarray = Q_bc.value[item_id].copy()  # shape (K,)
+        Sp: np.ndarray = Sp_bc.value  # shape (K, K)
         c_i = float(item_conf_bc.value[item_id])
 
         # ---------- gather observed-user data ----------
@@ -143,7 +158,7 @@ def _make_item_updater(P_bc: Broadcast, Q_bc: Broadcast, Sp_bc: Broadcast,
         w_uis = np.array([x[2] for x in users], dtype=np.float64)
 
         # ---------- initialise prediction cache ----------
-        r_hats: np.ndarray = P_obs @ q_i   # (|R_i|,)
+        r_hats: np.ndarray = P_obs @ q_i  # (|R_i|,)
 
         # ---------- element-wise ALS loop ----------
         for f in range(K):
@@ -152,18 +167,14 @@ def _make_item_updater(P_bc: Broadcast, Q_bc: Broadcast, Sp_bc: Broadcast,
             r_hats_f: np.ndarray = r_hats - old_qif * P_obs[:, f]
 
             # Numerator — observed users
-            num = float(
-                np.dot(w_uis * r_uis - (w_uis - c_i) * r_hats_f, P_obs[:, f])
-            )
+            num = float(np.dot(w_uis * r_uis - (w_uis - c_i) * r_hats_f, P_obs[:, f]))
             # Subtract missing-data cache term: c_i · Σ_{k≠f} q_ik · Sp[k,f]
             #   = c_i · (q_i @ Sp[:,f] − q_if · Sp[f,f])
             num -= c_i * (float(q_i @ Sp[:, f]) - old_qif * float(Sp[f, f]))
 
             # Denominator
             denom = (
-                float(np.dot(w_uis - c_i, P_obs[:, f] ** 2))
-                + c_i * float(Sp[f, f])
-                + lambda_reg
+                float(np.dot(w_uis - c_i, P_obs[:, f] ** 2)) + c_i * float(Sp[f, f]) + lambda_reg
             )
 
             q_i[f] = num / max(denom, 1e-10)
@@ -179,23 +190,23 @@ def _make_item_updater(P_bc: Broadcast, Q_bc: Broadcast, Sp_bc: Broadcast,
 #   eALS model                                                                 #
 # =========================================================================== #
 
+
 class eALS:
     """
     Element-wise Alternating Least Squares for implicit feedback.
 
     Trains a matrix-factorisation model where missing data is weighted
-    by item popularity (Eq. 7–8).  Spark is used to parallelise the
+    by item popularity (Eq. 7–8). Spark is used to parallelise the
     user-factor and item-factor update passes (Algorithm 1).
 
-    Parameters
-    ----------
-    n_users, n_items : dataset dimensions
-    K                : number of latent factors
-    lambda_reg       : L2 regularisation (paper: 0.01)
-    c0               : overall missing-data weight scale
-    alpha            : popularity exponent (0 → uniform, 0.5 → paper default)
-    w_obs            : weight on every observed interaction (paper: 1.0)
-    seed             : random seed for factor initialisation
+    :param n_users: number of distinct users
+    :param n_items: number of distinct items
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength (paper: 0.01)
+    :param c0: overall missing-data weight scale
+    :param alpha: popularity exponent (0 = uniform, 0.5 = paper default)
+    :param w_obs: weight on every observed interaction (paper: 1.0)
+    :param seed: random seed for factor initialisation
     """
 
     def __init__(
@@ -220,8 +231,8 @@ class eALS:
 
         # Initialise factor matrices with small Gaussian noise
         rng = np.random.default_rng(seed)
-        self.P: np.ndarray = rng.normal(0, 0.01, (n_users, K))   # (M, K)
-        self.Q: np.ndarray = rng.normal(0, 0.01, (n_items, K))   # (N, K)
+        self.P: np.ndarray = rng.normal(0, 0.01, (n_users, K))  # (M, K)
+        self.Q: np.ndarray = rng.normal(0, 0.01, (n_items, K))  # (N, K)
 
     # ----------------------------------------------------------------------- #
     #   Cache computations (run on driver; fast via NumPy BLAS)               #
@@ -229,21 +240,26 @@ class eALS:
 
     def _compute_sq(self, item_conf: np.ndarray) -> np.ndarray:
         """
-        S^q = Σ_i c_i · q_i q_i^T  ∈  R^{K×K}
+        Computes S^q = Σ_i c_i · q_i q_i^T ∈ R^{K×K}.
 
-        Vectorised form: S^q = (diag(c) Q)^T Q = (c ⊙ Q)^T Q
+        Vectorised form: S^q = (diag(c) Q)^T Q = (c ⊙ Q)^T Q.
         Complexity: O(N·K²) via BLAS dgemm — fast even for N=75K, K=128.
+
+        :param item_conf: per-item confidence array of shape (n_items,)
+        :return: the K×K cache matrix S^q
         """
-        weighted_Q = self.Q * item_conf[:, np.newaxis]   # (N, K)
-        return weighted_Q.T @ self.Q                      # (K, K)
+        weighted_Q = self.Q * item_conf[:, np.newaxis]  # (N, K)
+        return weighted_Q.T @ self.Q  # (K, K)
 
     def _compute_sp(self) -> np.ndarray:
         """
-        S^p = P^T P  ∈  R^{K×K}
+        Computes S^p = P^T P ∈ R^{K×K}.
 
         Complexity: O(M·K²).
+
+        :return: the K×K cache matrix S^p
         """
-        return self.P.T @ self.P   # (K, K)
+        return self.P.T @ self.P  # (K, K)
 
     # ----------------------------------------------------------------------- #
     #   Main training loop                                                     #
@@ -252,18 +268,27 @@ class eALS:
     def fit(
         self,
         sc: SparkContext,
-        train_rdd,                # RDD of (user_idx, item_idx, r_ui, w_ui)
-        item_conf: np.ndarray,    # shape (n_items,)
+        train_rdd,  # RDD of (user_idx, item_idx, r_ui, w_ui)
+        item_conf: np.ndarray,  # shape (n_items,)
         n_epochs: int = 20,
-        evaluator=None,           # optional Evaluator instance
-        test_df=None,             # optional pandas test DataFrame
-        train_df=None,            # optional pandas train DataFrame (for eval)
+        evaluator=None,  # optional Evaluator instance
+        test_df=None,  # optional pandas test DataFrame
+        train_df=None,  # optional pandas train DataFrame (for eval)
         verbose: bool = True,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
-        Train for n_epochs using Spark-parallelised factor updates.
+        Trains for n_epochs using Spark-parallelised factor updates.
 
-        Returns a list of per-epoch result dicts with keys:
+        :param sc: active SparkContext
+        :param train_rdd: RDD of (user_idx, item_idx, r_ui, w_ui) tuples
+        :param item_conf: per-item confidence array of shape (n_items,)
+        :param n_epochs: number of training epochs
+        :param evaluator: optional Evaluator used to score each epoch
+        :param test_df: optional held-out interactions, required if evaluator is set
+        :param train_df: optional training interactions, used to build the
+            evaluator's exclusion set
+        :param verbose: whether to print per-epoch progress
+        :return: list of per-epoch result dicts with keys
             epoch, time_s, hr@{K}, ndcg@{K}
         """
         # ---- build and cache grouped RDDs (created once) ---- #
@@ -278,17 +303,10 @@ class eALS:
             c = float(item_conf_init_bc.value[iid])
             return (int(uid), (int(iid), float(r), float(w), c))
 
-        user_items_rdd = (
-            train_rdd
-            .map(add_item_conf)
-            .groupByKey()
-            .mapValues(list)
-            .cache()
-        )
+        user_items_rdd = train_rdd.map(add_item_conf).groupByKey().mapValues(list).cache()
 
         item_users_rdd = (
-            train_rdd
-            .map(lambda x: (int(x[1]), (int(x[0]), float(x[2]), float(x[3]))))
+            train_rdd.map(lambda x: (int(x[1]), (int(x[0]), float(x[2]), float(x[3]))))
             .groupByKey()
             .mapValues(list)
             .cache()
@@ -298,12 +316,9 @@ class eALS:
         n_users_rdd = user_items_rdd.count()
         n_items_rdd = item_users_rdd.count()
         if verbose:
-            print(
-                f"[eALS] Cached RDDs — {n_users_rdd:,} user groups, "
-                f"{n_items_rdd:,} item groups"
-            )
+            print(f"[eALS] Cached RDDs — {n_users_rdd:,} user groups, {n_items_rdd:,} item groups")
 
-        history: List[Dict] = []
+        history: list[dict] = []
 
         for epoch in range(n_epochs):
             t0 = time.time()
@@ -315,20 +330,20 @@ class eALS:
             Sq = self._compute_sq(item_conf)
 
             # Broadcast current model state to all workers
-            Q_bc  = sc.broadcast(self.Q)
-            P_bc  = sc.broadcast(self.P)
+            Q_bc = sc.broadcast(self.Q)
+            P_bc = sc.broadcast(self.P)
             Sq_bc = sc.broadcast(Sq)
 
-            user_updater = _make_user_updater(
-                Q_bc, P_bc, Sq_bc, self.K, self.lambda_reg
-            )
+            user_updater = _make_user_updater(Q_bc, P_bc, Sq_bc, self.K, self.lambda_reg)
             new_user_factors = user_items_rdd.map(user_updater).collect()
 
             # Write results back into driver-side P matrix
             for user_id, p_u in new_user_factors:
                 self.P[user_id] = np.array(p_u, dtype=np.float64)
 
-            Q_bc.unpersist();  P_bc.unpersist();  Sq_bc.unpersist()
+            Q_bc.unpersist()
+            P_bc.unpersist()
+            Sq_bc.unpersist()
 
             # ============================================================== #
             #   STEP B: Update item factors (Eq. 13, Algorithm 1 lines 12–19)#
@@ -336,10 +351,10 @@ class eALS:
 
             Sp = self._compute_sp()
 
-            P_bc          = sc.broadcast(self.P)
-            Q_bc          = sc.broadcast(self.Q)
-            Sp_bc         = sc.broadcast(Sp)
-            item_conf_bc  = sc.broadcast(item_conf)
+            P_bc = sc.broadcast(self.P)
+            Q_bc = sc.broadcast(self.Q)
+            Sp_bc = sc.broadcast(Sp)
+            item_conf_bc = sc.broadcast(item_conf)
 
             item_updater = _make_item_updater(
                 P_bc, Q_bc, Sp_bc, item_conf_bc, self.K, self.lambda_reg
@@ -349,32 +364,32 @@ class eALS:
             for item_id, q_i in new_item_factors:
                 self.Q[item_id] = np.array(q_i, dtype=np.float64)
 
-            P_bc.unpersist(); Q_bc.unpersist()
-            Sp_bc.unpersist(); item_conf_bc.unpersist()
+            P_bc.unpersist()
+            Q_bc.unpersist()
+            Sp_bc.unpersist()
+            item_conf_bc.unpersist()
 
             elapsed = time.time() - t0
 
             # ============================================================== #
             #   Evaluation                                                     #
             # ============================================================== #
-            result: Dict = {"epoch": epoch + 1, "time_s": round(elapsed, 2)}
+            result: dict = {"epoch": epoch + 1, "time_s": round(elapsed, 2)}
 
             if evaluator is not None and test_df is not None:
                 hr, ndcg = evaluator.evaluate(self.P, self.Q, test_df, train_df)
-                result[f"hr@{evaluator.top_k}"]   = round(hr,   4)
+                result[f"hr@{evaluator.top_k}"] = round(hr, 4)
                 result[f"ndcg@{evaluator.top_k}"] = round(ndcg, 4)
                 if verbose:
                     print(
-                        f"  Epoch {epoch+1:>3}/{n_epochs} | "
+                        f"  Epoch {epoch + 1:>3}/{n_epochs} | "
                         f"time: {elapsed:>6.1f}s | "
                         f"HR@{evaluator.top_k}: {hr:.4f} | "
                         f"NDCG@{evaluator.top_k}: {ndcg:.4f}"
                     )
             else:
                 if verbose:
-                    print(
-                        f"  Epoch {epoch+1:>3}/{n_epochs} | time: {elapsed:>6.1f}s"
-                    )
+                    print(f"  Epoch {epoch + 1:>3}/{n_epochs} | time: {elapsed:>6.1f}s")
 
             history.append(result)
 
@@ -390,13 +405,21 @@ class eALS:
     # ----------------------------------------------------------------------- #
 
     def predict_user(self, user_id: int) -> np.ndarray:
-        """Return scores for ALL items for the given user (shape: (N,))."""
+        """
+        Returns scores for all items for the given user.
+
+        :param user_id: index of the user to score
+        :return: score array of shape (n_items,)
+        """
         return self.Q @ self.P[user_id]
 
     def predict_all(self) -> np.ndarray:
         """
-        Return the full (M × N) score matrix.
+        Returns the full (M × N) score matrix.
+
         Caution: O(M · N) memory — use only for small datasets.
+
+        :return: score matrix of shape (n_users, n_items)
         """
         return self.P @ self.Q.T
 
