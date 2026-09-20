@@ -298,3 +298,11 @@ summary from a longer body where one is needed.
   local/CI development.
 - Hyperparameters match the paper's SIGIR 2016 defaults (`λ=0.01`,
   `c0` search range, `α≈0.5`) as documented in `config.py`.
+
+## Transparency
+
+I wish to be transparent about my use of AI in this project. 
+It was understood by me that you, professors of this course, are not opposed to the transitioning to AI-assisted coding, and on the contrary, encourage us to get used to these new tools. Because after 6 months of internship, I forgot most of the content of the Data Science projects done in the Master Year 1 (I did retain the skills learned from them though...), I did opt to use AI to help me work off of a project with which I was not completely familiar, in particular in understanding the initial project, and redacting the documentation pieces. I did however, follow along all the steps detailed in the course myself, including git commands, streamlit building, and Docker containerization. 
+If my assumption here that AI-assistance was not allowed for the project was wrong, please do tell me and give me a chance to do it fully manually...
+I appreciate your time, your understanding, and thought your course was quite useful, despite some parts having been covered already by my software development experience.
+Thank you!
