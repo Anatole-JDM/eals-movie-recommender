@@ -15,7 +15,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY config.py data_loader.py eals_spark.py evaluation.py app.py ./
+COPY config.py data_loader.py eals_spark.py evaluation.py main.py app.py ./
 COPY .streamlit ./.streamlit
 
 # Data is downloaded at runtime into this volume-friendly directory.
