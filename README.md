@@ -195,14 +195,24 @@ above.
 
 ## Docker
 
-Build and run the containerized Streamlit app:
+A pre-built image is published on Docker Hub:
+**[anatolejdm/eals-movie-recommender](https://hub.docker.com/r/anatolejdm/eals-movie-recommender)**
+
+Pull and run it directly — no clone or build required:
+
+```bash
+docker pull anatolejdm/eals-movie-recommender:latest
+docker run -p 8501:8501 -v "$(pwd)/data:/app/data" anatolejdm/eals-movie-recommender
+```
+
+Or build it yourself from source:
 
 ```bash
 docker build -t eals-streamlit .
 docker run -p 8501:8501 -v "$(pwd)/data:/app/data" eals-streamlit
 ```
 
-or with Docker Compose:
+or with Docker Compose (builds from source):
 
 ```bash
 docker compose up --build
@@ -214,7 +224,7 @@ each time. The image also bundles `main.py`, so the exact command from
 [Training](#training) reproduces the same results inside the container:
 
 ```bash
-docker run --rm --entrypoint python -v "$(pwd)/data:/app/data" eals-streamlit main.py
+docker run --rm --entrypoint python -v "$(pwd)/data:/app/data" anatolejdm/eals-movie-recommender main.py
 ```
 
 > **Note on image size:** the image bundles a JRE to run PySpark inside
