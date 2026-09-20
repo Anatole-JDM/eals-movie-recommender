@@ -26,7 +26,6 @@ random — enough to get stable estimates while keeping evaluation fast.
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple
 
 
 class Evaluator:
@@ -45,13 +44,13 @@ class Evaluator:
     def __init__(
         self,
         top_k: int = 100,
-        max_eval_users: Optional[int] = 2000,
+        max_eval_users: int | None = 2000,
         seed: int = 42,
     ):
         self.top_k = top_k
         self.max_eval_users = max_eval_users
         self.rng = np.random.default_rng(seed)
-        self._train_user_items: Optional[dict] = None   # cached lookup
+        self._train_user_items: dict | None = None  # cached lookup
 
     # ----------------------------------------------------------------------- #
     #   Build training-item lookup (call once before the epoch loop)          #
@@ -65,11 +64,7 @@ class Evaluator:
         Must be called before the first evaluate() call.  Calling it again
         rebuilds the lookup (useful if train_df changes).
         """
-        self._train_user_items: dict = (
-            train_df.groupby("user_idx")["item_idx"]
-            .apply(set)
-            .to_dict()
-        )
+        self._train_user_items: dict = train_df.groupby("user_idx")["item_idx"].apply(set).to_dict()
 
     # ----------------------------------------------------------------------- #
     #   Core evaluation                                                        #
@@ -80,8 +75,8 @@ class Evaluator:
         P: np.ndarray,
         Q: np.ndarray,
         test_df: pd.DataFrame,
-        train_df: Optional[pd.DataFrame] = None,
-    ) -> Tuple[float, float]:
+        train_df: pd.DataFrame | None = None,
+    ) -> tuple[float, float]:
         """
         Compute HR@K and NDCG@K.
 
@@ -103,8 +98,7 @@ class Evaluator:
             self.build_train_lookup(train_df)
         if self._train_user_items is None:
             raise RuntimeError(
-                "Call build_train_lookup(train_df) before evaluate(), "
-                "or pass train_df directly."
+                "Call build_train_lookup(train_df) before evaluate(), or pass train_df directly."
             )
 
         # Sub-sample test users if needed
@@ -114,7 +108,7 @@ class Evaluator:
                 n=self.max_eval_users, random_state=int(self.rng.integers(1 << 31))
             )
 
-        hr_list   = []
+        hr_list = []
         ndcg_list = []
 
         for row in eval_df.itertuples(index=False):
@@ -133,13 +127,13 @@ class Evaluator:
             test_score = scores[i]
             rank = int((scores > test_score).sum()) + 1
 
-            hr   = 1.0 if rank <= self.top_k else 0.0
+            hr = 1.0 if rank <= self.top_k else 0.0
             ndcg = (1.0 / np.log2(rank + 1)) if rank <= self.top_k else 0.0
 
             hr_list.append(hr)
             ndcg_list.append(ndcg)
 
-        hr_mean   = float(np.mean(hr_list))
+        hr_mean = float(np.mean(hr_list))
         ndcg_mean = float(np.mean(ndcg_list))
         return hr_mean, ndcg_mean
 

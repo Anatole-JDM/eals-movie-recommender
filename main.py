@@ -23,29 +23,28 @@ Usage
 Requirements: pyspark, numpy, pandas  (see requirements.txt)
 """
 
+import os
+import sys
 import time
 import warnings
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
-warnings.filterwarnings("ignore")
-
-# ---- project imports ---- #
 from config import CFG
 from data_loader import (
+    build_training_rdd,
+    compute_item_confidence,
+    dataset_summary,
     download_data,
-    load_and_filter,
     encode_ids,
     leave_one_out_split,
-    compute_item_confidence,
-    build_training_rdd,
-    dataset_summary,
+    load_and_filter,
 )
 from eals_spark import eALS
 from evaluation import Evaluator
 
-import os
-import sys  
+warnings.filterwarnings("ignore")
 
 # Force Spark workers to use the same interpreter as this process.
 # This avoids mismatches when VS Code uses a virtual environment.
@@ -57,17 +56,18 @@ os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 #   Spark session                                                               #
 # =========================================================================== #
 
+
 def build_spark_context():
     """Create and return a SparkContext configured for local execution."""
-    from pyspark import SparkContext, SparkConf
+    from pyspark import SparkConf, SparkContext
 
     conf = (
         SparkConf()
         .setAppName(CFG.spark_app_name)
         .setMaster(CFG.spark_master)
-        .set("spark.executor.memory",      CFG.spark_executor_memory)
-        .set("spark.driver.memory",        CFG.spark_driver_memory)
-        .set("spark.serializer",           "org.apache.spark.serializer.KryoSerializer")
+        .set("spark.executor.memory", CFG.spark_executor_memory)
+        .set("spark.driver.memory", CFG.spark_driver_memory)
+        .set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .set("spark.kryoserializer.buffer.max", "512m")
         .set("spark.driver.maxResultSize", "2g")
         # Silence verbose Spark / Hadoop logs
@@ -84,6 +84,7 @@ def build_spark_context():
 #   Helpers                                                                    #
 # =========================================================================== #
 
+
 def print_section(title: str) -> None:
     width = 60
     print("\n" + "=" * width)
@@ -94,17 +95,14 @@ def print_section(title: str) -> None:
 def print_results_table(history: list, label: str, top_k: int) -> None:
     """Pretty-print per-epoch metrics."""
     print(f"\n  [{label}]")
-    print(f"  {'Epoch':>6}  {'Time(s)':>8}  {'HR@'+str(top_k):>9}  {'NDCG@'+str(top_k):>10}")
+    print(f"  {'Epoch':>6}  {'Time(s)':>8}  {'HR@' + str(top_k):>9}  {'NDCG@' + str(top_k):>10}")
     print("  " + "-" * 40)
     for r in history:
-        hr_key   = f"hr@{top_k}"
+        hr_key = f"hr@{top_k}"
         ndcg_key = f"ndcg@{top_k}"
-        hr   = r.get(hr_key,   float("nan"))
+        hr = r.get(hr_key, float("nan"))
         ndcg = r.get(ndcg_key, float("nan"))
-        print(
-            f"  {r['epoch']:>6}  {r['time_s']:>8.1f}  "
-            f"{hr:>9.4f}  {ndcg:>10.4f}"
-        )
+        print(f"  {r['epoch']:>6}  {r['time_s']:>8.1f}  {hr:>9.4f}  {ndcg:>10.4f}")
 
 
 def best_row(history: list, top_k: int) -> dict:
@@ -117,6 +115,7 @@ def best_row(history: list, top_k: int) -> dict:
 # =========================================================================== #
 #   Main                                                                       #
 # =========================================================================== #
+
 
 def main():
     t_total = time.time()
@@ -163,9 +162,7 @@ def main():
     print_section("3. Experiment A  |  eALS-Uniform (α = 0)")
     print(f"  K={CFG.K}  λ={CFG.lambda_reg}  c0={CFG.c0}  α=0  epochs={CFG.n_epochs}\n")
 
-    item_conf_uniform = compute_item_confidence(
-        train_df, n_items, c0=CFG.c0, alpha=0.0
-    )
+    item_conf_uniform = compute_item_confidence(train_df, n_items, c0=CFG.c0, alpha=0.0)
 
     model_uniform = eALS(
         n_users=n_users,
@@ -197,9 +194,7 @@ def main():
     print_section("4. Experiment B  |  eALS-Popularity (α = 0.5)")
     print(f"  K={CFG.K}  λ={CFG.lambda_reg}  c0={CFG.c0}  α=0.5  epochs={CFG.n_epochs}\n")
 
-    item_conf_pop = compute_item_confidence(
-        train_df, n_items, c0=CFG.c0, alpha=CFG.alpha
-    )
+    item_conf_pop = compute_item_confidence(train_df, n_items, c0=CFG.c0, alpha=CFG.alpha)
 
     model_pop = eALS(
         n_users=n_users,
@@ -230,31 +225,27 @@ def main():
     # ------------------------------------------------------------------ #
     print_section("5. Summary — best epoch results")
 
-    top_k   = CFG.top_k
-    hr_key  = f"hr@{top_k}"
-    nk_key  = f"ndcg@{top_k}"
+    top_k = CFG.top_k
+    hr_key = f"hr@{top_k}"
+    nk_key = f"ndcg@{top_k}"
 
     best_u = best_row(history_uniform, top_k)
-    best_p = best_row(history_pop,     top_k)
+    best_p = best_row(history_pop, top_k)
 
     rows = [
         {
-            "Model":             "eALS-Uniform (α=0)",
-            "Best Epoch":        best_u.get("epoch",  "-"),
-            f"HR@{top_k}":       best_u.get(hr_key,   float("nan")),
-            f"NDCG@{top_k}":     best_u.get(nk_key,   float("nan")),
-            "Avg time/epoch(s)": round(
-                np.mean([r["time_s"] for r in history_uniform]), 2
-            ),
+            "Model": "eALS-Uniform (α=0)",
+            "Best Epoch": best_u.get("epoch", "-"),
+            f"HR@{top_k}": best_u.get(hr_key, float("nan")),
+            f"NDCG@{top_k}": best_u.get(nk_key, float("nan")),
+            "Avg time/epoch(s)": round(np.mean([r["time_s"] for r in history_uniform]), 2),
         },
         {
-            "Model":             f"eALS-Popularity (α={CFG.alpha})",
-            "Best Epoch":        best_p.get("epoch",  "-"),
-            f"HR@{top_k}":       best_p.get(hr_key,   float("nan")),
-            f"NDCG@{top_k}":     best_p.get(nk_key,   float("nan")),
-            "Avg time/epoch(s)": round(
-                np.mean([r["time_s"] for r in history_pop]), 2
-            ),
+            "Model": f"eALS-Popularity (α={CFG.alpha})",
+            "Best Epoch": best_p.get("epoch", "-"),
+            f"HR@{top_k}": best_p.get(hr_key, float("nan")),
+            f"NDCG@{top_k}": best_p.get(nk_key, float("nan")),
+            "Avg time/epoch(s)": round(np.mean([r["time_s"] for r in history_pop]), 2),
         },
     ]
     summary_df = pd.DataFrame(rows).set_index("Model")
@@ -264,9 +255,9 @@ def main():
     #  6.  Relative gain of popularity weighting                          #
     # ------------------------------------------------------------------ #
     if best_u and best_p:
-        hr_gain   = (best_p[hr_key]  - best_u[hr_key])  / (best_u[hr_key]  + 1e-12) * 100
-        ndcg_gain = (best_p[nk_key]  - best_u[nk_key])  / (best_u[nk_key]  + 1e-12) * 100
-        print(f"\n  Relative improvement (Popularity vs Uniform):")
+        hr_gain = (best_p[hr_key] - best_u[hr_key]) / (best_u[hr_key] + 1e-12) * 100
+        ndcg_gain = (best_p[nk_key] - best_u[nk_key]) / (best_u[nk_key] + 1e-12) * 100
+        print("\n  Relative improvement (Popularity vs Uniform):")
         print(f"    HR@{top_k}  : {hr_gain:+.2f}%")
         print(f"    NDCG@{top_k}: {ndcg_gain:+.2f}%")
 
@@ -277,20 +268,12 @@ def main():
     print(f"\n  {'Epoch':>6}  {'Uniform (s)':>12}  {'Popularity (s)':>15}")
     print("  " + "-" * 38)
     for u_row, p_row in zip(history_uniform, history_pop):
-        print(
-            f"  {u_row['epoch']:>6}  "
-            f"{u_row['time_s']:>12.1f}  "
-            f"{p_row['time_s']:>15.1f}"
-        )
+        print(f"  {u_row['epoch']:>6}  {u_row['time_s']:>12.1f}  {p_row['time_s']:>15.1f}")
 
     print(
-        f"\n  Mean epoch time — Uniform:    "
-        f"{np.mean([r['time_s'] for r in history_uniform]):.1f}s"
+        f"\n  Mean epoch time — Uniform:    {np.mean([r['time_s'] for r in history_uniform]):.1f}s"
     )
-    print(
-        f"  Mean epoch time — Popularity: "
-        f"{np.mean([r['time_s'] for r in history_pop]):.1f}s"
-    )
+    print(f"  Mean epoch time — Popularity: {np.mean([r['time_s'] for r in history_pop]):.1f}s")
 
     # ------------------------------------------------------------------ #
     #  8.  Save results to CSV                                            #
@@ -305,7 +288,7 @@ def main():
     #  9.  Stop Spark                                                     #
     # ------------------------------------------------------------------ #
     sc.stop()
-    print(f"\n  Total wall-clock time: {(time.time() - t_total)/60:.1f} min")
+    print(f"\n  Total wall-clock time: {(time.time() - t_total) / 60:.1f} min")
     print_section("Done")
 
 

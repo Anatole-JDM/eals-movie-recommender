@@ -17,14 +17,15 @@ Pipeline
 
 import os
 import urllib.request
+
 import numpy as np
 import pandas as pd
 from pyspark import SparkContext
 
-
 # --------------------------------------------------------------------------- #
 #  1.  Raw data download                                                       #
 # --------------------------------------------------------------------------- #
+
 
 def download_data(url: str, local_path: str) -> None:
     """Download the dataset if it is not already present."""
@@ -40,6 +41,7 @@ def download_data(url: str, local_path: str) -> None:
 # --------------------------------------------------------------------------- #
 #  2.  Load & iterative filter                                                 #
 # --------------------------------------------------------------------------- #
+
 
 def load_and_filter(
     local_path: str,
@@ -96,6 +98,7 @@ def load_and_filter(
 #  3.  ID encoding                                                             #
 # --------------------------------------------------------------------------- #
 
+
 def encode_ids(df: pd.DataFrame):
     """
     Map string user/item IDs to consecutive integers.
@@ -129,6 +132,7 @@ def encode_ids(df: pd.DataFrame):
 #  4.  Train / test split                                                      #
 # --------------------------------------------------------------------------- #
 
+
 def leave_one_out_split(df: pd.DataFrame):
     """
     Hold out each user's chronologically *latest* interaction as the test
@@ -142,16 +146,14 @@ def leave_one_out_split(df: pd.DataFrame):
     train = df_sorted.drop(index=test.index)
     train = train.reset_index(drop=True)
     test = test.reset_index(drop=True)
-    print(
-        f"[data_loader] Leave-one-out split → "
-        f"train: {len(train):,} | test: {len(test):,}"
-    )
+    print(f"[data_loader] Leave-one-out split → train: {len(train):,} | test: {len(test):,}")
     return train, test
 
 
 # --------------------------------------------------------------------------- #
 #  5.  Item confidence                                                         #
 # --------------------------------------------------------------------------- #
+
 
 def compute_item_confidence(
     train_df: pd.DataFrame,
@@ -205,6 +207,7 @@ def compute_item_confidence(
 #  6.  Build Spark RDD                                                         #
 # --------------------------------------------------------------------------- #
 
+
 def build_training_rdd(sc: SparkContext, train_df: pd.DataFrame, n_partitions: int = 8):
     """
     Convert the training DataFrame to a Spark RDD of tuples:
@@ -216,8 +219,7 @@ def build_training_rdd(sc: SparkContext, train_df: pd.DataFrame, n_partitions: i
     The RDD is cached so downstream transformations reuse it cheaply.
     """
     records = [
-        (int(row.user_idx), int(row.item_idx), 1.0, 1.0)
-        for row in train_df.itertuples(index=False)
+        (int(row.user_idx), int(row.item_idx), 1.0, 1.0) for row in train_df.itertuples(index=False)
     ]
     rdd = sc.parallelize(records, numSlices=n_partitions).cache()
     print(f"[data_loader] Training RDD: {rdd.count():,} interactions, {n_partitions} partitions")
@@ -227,6 +229,7 @@ def build_training_rdd(sc: SparkContext, train_df: pd.DataFrame, n_partitions: i
 # --------------------------------------------------------------------------- #
 #  7.  Convenience summary                                                     #
 # --------------------------------------------------------------------------- #
+
 
 def dataset_summary(train_df: pd.DataFrame, test_df: pd.DataFrame) -> None:
     n_users = train_df["user_idx"].nunique()

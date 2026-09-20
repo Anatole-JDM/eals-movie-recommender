@@ -11,19 +11,18 @@ access and no Spark session are required, so they run fast in CI.
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from data_loader import (
-    load_and_filter,
+    compute_item_confidence,
     encode_ids,
     leave_one_out_split,
-    compute_item_confidence,
+    load_and_filter,
 )
-
 
 # --------------------------------------------------------------------------- #
 #  Helpers                                                                     #
 # --------------------------------------------------------------------------- #
+
 
 def _write_raw_csv(path, rows):
     """Write rows of (user_id, item_id, rating, timestamp) with no header,
@@ -36,6 +35,7 @@ def _write_raw_csv(path, rows):
 # --------------------------------------------------------------------------- #
 #  load_and_filter                                                             #
 # --------------------------------------------------------------------------- #
+
 
 class TestLoadAndFilter:
     def test_keeps_users_and_items_at_or_above_threshold(self, tmp_path):
@@ -92,9 +92,7 @@ class TestLoadAndFilter:
         df_b = load_and_filter(str(csv_path), min_interactions=1, sample_fraction=0.5, seed=42)
 
         # Same seed -> identical sample
-        pd.testing.assert_frame_equal(
-            df_a.reset_index(drop=True), df_b.reset_index(drop=True)
-        )
+        pd.testing.assert_frame_equal(df_a.reset_index(drop=True), df_b.reset_index(drop=True))
         assert len(df_a) < 50
 
     def test_output_columns(self, tmp_path):
@@ -110,12 +108,15 @@ class TestLoadAndFilter:
 #  encode_ids                                                                  #
 # --------------------------------------------------------------------------- #
 
+
 class TestEncodeIds:
     def test_dense_zero_based_indices(self):
-        df = pd.DataFrame({
-            "user_id": ["u2", "u1", "u2"],
-            "item_id": ["iB", "iA", "iA"],
-        })
+        df = pd.DataFrame(
+            {
+                "user_id": ["u2", "u1", "u2"],
+                "item_id": ["iB", "iA", "iA"],
+            }
+        )
 
         encoded, user2id, item2id, n_users, n_items = encode_ids(df)
 
@@ -125,10 +126,12 @@ class TestEncodeIds:
         assert set(encoded["item_idx"]) == {0, 1}
 
     def test_mapping_is_bijective_and_sorted(self):
-        df = pd.DataFrame({
-            "user_id": ["u3", "u1", "u2"],
-            "item_id": ["i1", "i1", "i1"],
-        })
+        df = pd.DataFrame(
+            {
+                "user_id": ["u3", "u1", "u2"],
+                "item_id": ["i1", "i1", "i1"],
+            }
+        )
 
         _, user2id, item2id, n_users, _ = encode_ids(df)
 
@@ -137,10 +140,12 @@ class TestEncodeIds:
         assert len(set(user2id.values())) == n_users
 
     def test_consistent_mapping_across_rows(self):
-        df = pd.DataFrame({
-            "user_id": ["u1", "u1", "u2"],
-            "item_id": ["iA", "iB", "iA"],
-        })
+        df = pd.DataFrame(
+            {
+                "user_id": ["u1", "u1", "u2"],
+                "item_id": ["iA", "iB", "iA"],
+            }
+        )
 
         encoded, user2id, item2id, _, _ = encode_ids(df)
 
@@ -152,13 +157,16 @@ class TestEncodeIds:
 #  leave_one_out_split                                                         #
 # --------------------------------------------------------------------------- #
 
+
 class TestLeaveOneOutSplit:
     def test_exactly_one_test_row_per_user(self):
-        df = pd.DataFrame({
-            "user_idx": [0, 0, 0, 1, 1],
-            "item_idx": [0, 1, 2, 0, 1],
-            "timestamp": [10, 20, 30, 5, 15],
-        })
+        df = pd.DataFrame(
+            {
+                "user_idx": [0, 0, 0, 1, 1],
+                "item_idx": [0, 1, 2, 0, 1],
+                "timestamp": [10, 20, 30, 5, 15],
+            }
+        )
 
         train, test = leave_one_out_split(df)
 
@@ -167,11 +175,13 @@ class TestLeaveOneOutSplit:
         assert test["user_idx"].value_counts().max() == 1
 
     def test_held_out_row_is_chronologically_last(self):
-        df = pd.DataFrame({
-            "user_idx": [0, 0, 0],
-            "item_idx": [10, 20, 30],
-            "timestamp": [100, 300, 200],  # last by time is item_idx=20
-        })
+        df = pd.DataFrame(
+            {
+                "user_idx": [0, 0, 0],
+                "item_idx": [10, 20, 30],
+                "timestamp": [100, 300, 200],  # last by time is item_idx=20
+            }
+        )
 
         train, test = leave_one_out_split(df)
 
@@ -179,11 +189,13 @@ class TestLeaveOneOutSplit:
         assert set(train["item_idx"]) == {10, 30}
 
     def test_train_and_test_are_disjoint_and_complete(self):
-        df = pd.DataFrame({
-            "user_idx": [0, 0, 1, 1, 1],
-            "item_idx": [1, 2, 3, 4, 5],
-            "timestamp": [1, 2, 3, 4, 5],
-        })
+        df = pd.DataFrame(
+            {
+                "user_idx": [0, 0, 1, 1, 1],
+                "item_idx": [1, 2, 3, 4, 5],
+                "timestamp": [1, 2, 3, 4, 5],
+            }
+        )
 
         train, test = leave_one_out_split(df)
 
@@ -194,6 +206,7 @@ class TestLeaveOneOutSplit:
 # --------------------------------------------------------------------------- #
 #  compute_item_confidence                                                     #
 # --------------------------------------------------------------------------- #
+
 
 class TestComputeItemConfidence:
     def test_alpha_zero_is_uniform(self):

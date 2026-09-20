@@ -7,8 +7,7 @@ All hyperparameters match or are derived from:
   with Implicit Feedback", SIGIR 2016.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -20,8 +19,7 @@ class Config:
 
     # Direct CSV download from SNAP (user_id, item_id, rating, timestamp)
     data_url: str = (
-        "https://snap.stanford.edu/data/amazon/productGraph/"
-        "categoryFiles/ratings_Movies_and_TV.csv"
+        "https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/ratings_Movies_and_TV.csv"
     )
     raw_data_path: str = "./data/ratings_Movies_and_TV.csv"
 
@@ -40,7 +38,7 @@ class Config:
     #  Model hyper-parameters                                              #
     # ------------------------------------------------------------------ #
     # Number of latent factors
-    K: int = 64                  # paper uses 128; 64 keeps runtime reasonable
+    K: int = 64  # paper uses 128; 64 keeps runtime reasonable
 
     # L2 regularisation strength  (paper: λ = 0.01)
     lambda_reg: float = 0.01
@@ -71,13 +69,13 @@ class Config:
     # Max test users to score per evaluation pass.
     # Full ranking over all N items is O(n_eval_users * N * K).
     # Set to None to evaluate every test user (slower but exact).
-    max_eval_users: Optional[int] = 2000
+    max_eval_users: int | None = 2000
 
     # ------------------------------------------------------------------ #
     #  Spark                                                               #
     # ------------------------------------------------------------------ #
     spark_app_name: str = "eALS_Spark_Recommendation"
-    spark_master: str = "local[*]"           # use all local cores
+    spark_master: str = "local[*]"  # use all local cores
     spark_executor_memory: str = "4g"
     spark_driver_memory: str = "6g"
 
