@@ -30,15 +30,13 @@ import pandas as pd
 
 class Evaluator:
     """
-    Evaluate a (P, Q) factorisation under the leave-one-out protocol.
+    Evaluates a (P, Q) factorisation under the leave-one-out protocol.
 
-    Parameters
-    ----------
-    top_k         : cutoff position (paper uses 100)
-    max_eval_users: cap on the number of test users scored per evaluation
-                    call.  None = evaluate all.  2 000 is typically enough
-                    for stable estimates.
-    seed          : random seed for user sub-sampling
+    :param top_k: cutoff position (paper uses 100)
+    :param max_eval_users: cap on the number of test users scored per
+        evaluation call. None evaluates all; 2000 is typically enough for
+        stable estimates.
+    :param seed: random seed for user sub-sampling
     """
 
     def __init__(
@@ -58,11 +56,13 @@ class Evaluator:
 
     def build_train_lookup(self, train_df: pd.DataFrame) -> None:
         """
-        Pre-compute the set of training items per user so they can be
+        Pre-computes the set of training items per user so they can be
         efficiently excluded during ranking.
 
-        Must be called before the first evaluate() call.  Calling it again
-        rebuilds the lookup (useful if train_df changes).
+        Must be called before the first evaluate() call. Calling it again
+        rebuilds the lookup, which is useful if train_df changes.
+
+        :param train_df: training interactions with 'user_idx'/'item_idx' columns
         """
         self._train_user_items: dict = train_df.groupby("user_idx")["item_idx"].apply(set).to_dict()
 
@@ -78,20 +78,14 @@ class Evaluator:
         train_df: pd.DataFrame | None = None,
     ) -> tuple[float, float]:
         """
-        Compute HR@K and NDCG@K.
+        Computes HR@K and NDCG@K.
 
-        Parameters
-        ----------
-        P        : user factor matrix  (M, K)
-        Q        : item factor matrix  (N, K)
-        test_df  : test interactions with columns [user_idx, item_idx]
-        train_df : training interactions; used to build the exclusion set.
-                   If None, previously built lookup is used.
-
-        Returns
-        -------
-        hr   : float  ∈ [0, 1]
-        ndcg : float  ∈ [0, 1]
+        :param P: user factor matrix of shape (M, K)
+        :param Q: item factor matrix of shape (N, K)
+        :param test_df: test interactions with columns [user_idx, item_idx]
+        :param train_df: training interactions used to build the exclusion
+            set; if None, the previously built lookup is used
+        :return: (hr, ndcg), each in [0, 1]
         """
         # Build or reuse training-item exclusion sets
         if train_df is not None:
@@ -143,7 +137,13 @@ class Evaluator:
 
     @staticmethod
     def format_history(history: list, top_k: int) -> pd.DataFrame:
-        """Convert the list of epoch-result dicts to a pretty DataFrame."""
+        """
+        Converts the list of epoch-result dicts to a pretty DataFrame.
+
+        :param history: per-epoch result dicts, as produced by eALS.fit()
+        :param top_k: cutoff used when the metrics were computed
+        :return: DataFrame with HR@K / NDCG@K columns renamed for display
+        """
         df = pd.DataFrame(history)
         rename = {f"hr@{top_k}": f"HR@{top_k}", f"ndcg@{top_k}": f"NDCG@{top_k}"}
         df = df.rename(columns=rename)

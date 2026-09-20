@@ -58,7 +58,11 @@ os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 
 def build_spark_context():
-    """Create and return a SparkContext configured for local execution."""
+    """
+    Creates and returns a SparkContext configured for local execution.
+
+    :return: an initialised SparkContext
+    """
     from pyspark import SparkConf, SparkContext
 
     conf = (
@@ -86,6 +90,11 @@ def build_spark_context():
 
 
 def print_section(title: str) -> None:
+    """
+    Prints a banner-style section header.
+
+    :param title: heading text to display
+    """
     width = 60
     print("\n" + "=" * width)
     print(f"  {title}")
@@ -93,7 +102,13 @@ def print_section(title: str) -> None:
 
 
 def print_results_table(history: list, label: str, top_k: int) -> None:
-    """Pretty-print per-epoch metrics."""
+    """
+    Pretty-prints per-epoch metrics.
+
+    :param history: per-epoch result dicts, as produced by eALS.fit()
+    :param label: heading used to identify this run in the printed table
+    :param top_k: cutoff used when the metrics were computed
+    """
     print(f"\n  [{label}]")
     print(f"  {'Epoch':>6}  {'Time(s)':>8}  {'HR@' + str(top_k):>9}  {'NDCG@' + str(top_k):>10}")
     print("  " + "-" * 40)
@@ -106,7 +121,13 @@ def print_results_table(history: list, label: str, top_k: int) -> None:
 
 
 def best_row(history: list, top_k: int) -> dict:
-    """Return the epoch row with the highest HR@K."""
+    """
+    Returns the epoch row with the highest HR@K.
+
+    :param history: per-epoch result dicts, as produced by eALS.fit()
+    :param top_k: cutoff used when the metrics were computed
+    :return: the best-performing epoch's result dict, or {} if none qualify
+    """
     key = f"hr@{top_k}"
     valid = [r for r in history if key in r]
     return max(valid, key=lambda r: r[key]) if valid else {}
@@ -118,6 +139,7 @@ def best_row(history: list, top_k: int) -> dict:
 
 
 def main():
+    """Runs the end-to-end eALS-Uniform vs. eALS-Popularity comparison experiment."""
     t_total = time.time()
 
     # ------------------------------------------------------------------ #

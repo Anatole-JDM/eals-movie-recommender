@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Config:
+    """Hyperparameters and settings for one eALS-Spark experiment run."""
+
     # ------------------------------------------------------------------ #
     #  Dataset                                                             #
     # ------------------------------------------------------------------ #

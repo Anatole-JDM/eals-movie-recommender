@@ -28,7 +28,7 @@ from pyspark import SparkContext
 
 
 def download_data(url: str, local_path: str) -> None:
-    """Download the dataset if it is not already present."""
+    """Downloads the dataset if it is not already present."""
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     if os.path.exists(local_path):
         print(f"[data_loader] Dataset already on disk: {local_path}")
@@ -50,7 +50,7 @@ def load_and_filter(
     seed: int = 42,
 ) -> pd.DataFrame:
     """
-    Load the raw CSV and return a filtered DataFrame with columns
+    Loads the raw CSV and returns a filtered DataFrame with columns
     [user_id, item_id, timestamp].
 
     The filtering loop (standard in CF literature) removes users and
@@ -101,15 +101,11 @@ def load_and_filter(
 
 def encode_ids(df: pd.DataFrame):
     """
-    Map string user/item IDs to consecutive integers.
+    Maps string user/item IDs to consecutive integers.
 
-    Returns
-    -------
-    df        : DataFrame with added columns user_idx, item_idx
-    user2id   : dict str → int
-    item2id   : dict str → int
-    n_users   : int
-    n_items   : int
+    :param df: interactions with string 'user_id' and 'item_id' columns
+    :return: (df with added user_idx/item_idx columns, user2id map, item2id map,
+        n_users, n_items)
     """
     users = sorted(df["user_id"].unique())
     items = sorted(df["item_id"].unique())
@@ -135,8 +131,8 @@ def encode_ids(df: pd.DataFrame):
 
 def leave_one_out_split(df: pd.DataFrame):
     """
-    Hold out each user's chronologically *latest* interaction as the test
-    instance.  The model trains on all remaining data.
+    Holds out each user's chronologically *latest* interaction as the test
+    instance. The model trains on all remaining data.
 
     This matches the offline evaluation protocol in the paper
     (Section 5.1, "Offline Protocol").
@@ -162,7 +158,7 @@ def compute_item_confidence(
     alpha: float,
 ) -> np.ndarray:
     """
-    Compute per-item confidence values c_i (Eq. 8 in the paper):
+    Computes per-item confidence values c_i (Eq. 8 in the paper):
 
         c_i = c0 * f_i^α / Σ_j f_j^α
 
@@ -171,16 +167,11 @@ def compute_item_confidence(
     Special case: α = 0 reduces to the uniform weight w0 = c0 / N,
     which corresponds to the baseline used in ALS [Hu et al., ICDM 2008].
 
-    Parameters
-    ----------
-    train_df  : training interactions (must contain column 'item_idx')
-    n_items   : total number of distinct items
-    c0        : overall weight scale
-    alpha     : popularity exponent (paper finds α ≈ 0.4–0.5 optimal)
-
-    Returns
-    -------
-    c : np.ndarray of shape (n_items,)
+    :param train_df: training interactions, must contain an 'item_idx' column
+    :param n_items: total number of distinct items
+    :param c0: overall weight scale
+    :param alpha: popularity exponent (paper finds α ≈ 0.4–0.5 optimal)
+    :return: confidence array of shape (n_items,)
     """
     item_counts = train_df["item_idx"].value_counts()
     total_counts = item_counts.sum()
@@ -210,7 +201,7 @@ def compute_item_confidence(
 
 def build_training_rdd(sc: SparkContext, train_df: pd.DataFrame, n_partitions: int = 8):
     """
-    Convert the training DataFrame to a Spark RDD of tuples:
+    Converts the training DataFrame to a Spark RDD of tuples:
         (user_idx: int, item_idx: int, r_ui: float, w_ui: float)
 
     r_ui is always 1.0 (implicit, positive interaction).
@@ -232,6 +223,7 @@ def build_training_rdd(sc: SparkContext, train_df: pd.DataFrame, n_partitions: i
 
 
 def dataset_summary(train_df: pd.DataFrame, test_df: pd.DataFrame) -> None:
+    """Prints a summary of user/item counts, interaction counts, and sparsity."""
     n_users = train_df["user_idx"].nunique()
     n_items = train_df["item_idx"].nunique()
     n_train = len(train_df)

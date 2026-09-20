@@ -41,6 +41,13 @@ st.set_page_config(page_title="eALS Recommender", page_icon="🎬", layout="wide
 
 @st.cache_resource(show_spinner=False)
 def get_spark_context(n_partitions: int):
+    """
+    Creates and caches a local SparkContext for the Streamlit session.
+
+    :param n_partitions: unused directly, kept so Streamlit's cache key
+        changes when the sidebar's partition count changes
+    :return: an initialised SparkContext
+    """
     from pyspark import SparkConf, SparkContext
 
     conf = (
@@ -61,6 +68,17 @@ def get_spark_context(n_partitions: int):
 def load_dataset(
     data_url: str, raw_path: str, min_interactions: int, sample_fraction: float, seed: int
 ):
+    """
+    Downloads, filters, and splits the dataset, caching the result per
+    Streamlit session so the sidebar's other controls don't re-trigger it.
+
+    :param data_url: URL of the raw ratings CSV
+    :param raw_path: local path to cache the downloaded CSV
+    :param min_interactions: k-core filtering threshold
+    :param sample_fraction: fraction of raw rows to sample before filtering
+    :param seed: random seed for sampling
+    :return: (train_df, test_df, user2id, item2id, n_users, n_items)
+    """
     download_data(data_url, raw_path)
     df_raw = load_and_filter(
         raw_path,

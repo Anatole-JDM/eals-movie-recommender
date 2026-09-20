@@ -43,12 +43,18 @@ def _make_user_updater(
     Q_bc: Broadcast, P_bc: Broadcast, Sq_bc: Broadcast, K: int, lambda_reg: float
 ):
     """
-    Return a function that maps  (user_id, items_list) → (user_id, new_p_u).
-
-    items_list : list of (item_id, r_ui, w_ui, c_i)
+    Returns a function that maps (user_id, items_list) to (user_id, new_p_u),
+    where items_list is a list of (item_id, r_ui, w_ui, c_i) tuples.
 
     Uses a factory closure so that the broadcast variables are captured at
-    *definition time* (avoiding late-binding Python closure bugs in loops).
+    *definition time*, avoiding late-binding Python closure bugs in loops.
+
+    :param Q_bc: broadcast item factor matrix
+    :param P_bc: broadcast user factor matrix
+    :param Sq_bc: broadcast S^q cache matrix
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength
+    :return: a Spark-map-safe update_user(record) function
     """
 
     def update_user(record: tuple[int, list]) -> tuple[int, list]:
@@ -114,17 +120,24 @@ def _make_item_updater(
     lambda_reg: float,
 ):
     """
-    Return a function that maps  (item_id, users_list) → (item_id, new_q_i).
-
-    users_list : list of (user_id, r_ui, w_ui)
+    Returns a function that maps (item_id, users_list) to (item_id, new_q_i),
+    where users_list is a list of (user_id, r_ui, w_ui) tuples.
 
     Eq. 13:
       q_if = [ Σ_{u∈R_i}(w_ui·r_ui − (w_ui−c_i)·r̂^f_ui)·p_uf
                − c_i · Σ_{k≠f} q_ik · s^p_kf ]
              ÷ [ Σ_{u∈R_i}(w_ui−c_i)·p_uf² + c_i·s^p_ff + λ ]
 
-    Note: c_i is a *scalar* for each item (item-level popularity weight).
-          s^p_kf  is the (k,f) element of S^p = P^T P.
+    Note: c_i is a *scalar* for each item (item-level popularity weight),
+    and s^p_kf is the (k,f) element of S^p = P^T P.
+
+    :param P_bc: broadcast user factor matrix
+    :param Q_bc: broadcast item factor matrix
+    :param Sp_bc: broadcast S^p cache matrix
+    :param item_conf_bc: broadcast per-item confidence array
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength
+    :return: a Spark-map-safe update_item(record) function
     """
 
     def update_item(record: tuple[int, list]) -> tuple[int, list]:
@@ -183,18 +196,17 @@ class eALS:
     Element-wise Alternating Least Squares for implicit feedback.
 
     Trains a matrix-factorisation model where missing data is weighted
-    by item popularity (Eq. 7–8).  Spark is used to parallelise the
+    by item popularity (Eq. 7–8). Spark is used to parallelise the
     user-factor and item-factor update passes (Algorithm 1).
 
-    Parameters
-    ----------
-    n_users, n_items : dataset dimensions
-    K                : number of latent factors
-    lambda_reg       : L2 regularisation (paper: 0.01)
-    c0               : overall missing-data weight scale
-    alpha            : popularity exponent (0 → uniform, 0.5 → paper default)
-    w_obs            : weight on every observed interaction (paper: 1.0)
-    seed             : random seed for factor initialisation
+    :param n_users: number of distinct users
+    :param n_items: number of distinct items
+    :param K: number of latent factors
+    :param lambda_reg: L2 regularisation strength (paper: 0.01)
+    :param c0: overall missing-data weight scale
+    :param alpha: popularity exponent (0 = uniform, 0.5 = paper default)
+    :param w_obs: weight on every observed interaction (paper: 1.0)
+    :param seed: random seed for factor initialisation
     """
 
     def __init__(
@@ -228,19 +240,24 @@ class eALS:
 
     def _compute_sq(self, item_conf: np.ndarray) -> np.ndarray:
         """
-        S^q = Σ_i c_i · q_i q_i^T  ∈  R^{K×K}
+        Computes S^q = Σ_i c_i · q_i q_i^T ∈ R^{K×K}.
 
-        Vectorised form: S^q = (diag(c) Q)^T Q = (c ⊙ Q)^T Q
+        Vectorised form: S^q = (diag(c) Q)^T Q = (c ⊙ Q)^T Q.
         Complexity: O(N·K²) via BLAS dgemm — fast even for N=75K, K=128.
+
+        :param item_conf: per-item confidence array of shape (n_items,)
+        :return: the K×K cache matrix S^q
         """
         weighted_Q = self.Q * item_conf[:, np.newaxis]  # (N, K)
         return weighted_Q.T @ self.Q  # (K, K)
 
     def _compute_sp(self) -> np.ndarray:
         """
-        S^p = P^T P  ∈  R^{K×K}
+        Computes S^p = P^T P ∈ R^{K×K}.
 
         Complexity: O(M·K²).
+
+        :return: the K×K cache matrix S^p
         """
         return self.P.T @ self.P  # (K, K)
 
@@ -260,9 +277,18 @@ class eALS:
         verbose: bool = True,
     ) -> list[dict]:
         """
-        Train for n_epochs using Spark-parallelised factor updates.
+        Trains for n_epochs using Spark-parallelised factor updates.
 
-        Returns a list of per-epoch result dicts with keys:
+        :param sc: active SparkContext
+        :param train_rdd: RDD of (user_idx, item_idx, r_ui, w_ui) tuples
+        :param item_conf: per-item confidence array of shape (n_items,)
+        :param n_epochs: number of training epochs
+        :param evaluator: optional Evaluator used to score each epoch
+        :param test_df: optional held-out interactions, required if evaluator is set
+        :param train_df: optional training interactions, used to build the
+            evaluator's exclusion set
+        :param verbose: whether to print per-epoch progress
+        :return: list of per-epoch result dicts with keys
             epoch, time_s, hr@{K}, ndcg@{K}
         """
         # ---- build and cache grouped RDDs (created once) ---- #
@@ -379,13 +405,21 @@ class eALS:
     # ----------------------------------------------------------------------- #
 
     def predict_user(self, user_id: int) -> np.ndarray:
-        """Return scores for ALL items for the given user (shape: (N,))."""
+        """
+        Returns scores for all items for the given user.
+
+        :param user_id: index of the user to score
+        :return: score array of shape (n_items,)
+        """
         return self.Q @ self.P[user_id]
 
     def predict_all(self) -> np.ndarray:
         """
-        Return the full (M × N) score matrix.
+        Returns the full (M × N) score matrix.
+
         Caution: O(M · N) memory — use only for small datasets.
+
+        :return: score matrix of shape (n_users, n_items)
         """
         return self.P @ self.Q.T
 
