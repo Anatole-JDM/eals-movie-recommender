@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Project data & artifacts (downloaded/generated, not checked in)
+data/*.csv
+logs/
+results_*.csv
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Spark
+metastore_db/
+spark-warehouse/
+derby.log
+
+# Tests / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+.vscode/
+
+# Local tooling state
+.claude/
